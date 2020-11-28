@@ -36,22 +36,6 @@ cmake --build . --target check-mlir
 
 翻译> MLIR与外部表示之间的转换，转换为外部表示为Export，转换外部表示为MLIR为import
 
-Declarative Rewrite Rule (DRR)> 通过如TableGen的形式定义重写规则，自动生成mlir::RewritePattern
-
-Dialect>
-
-扩展mlir系统的一组功能，创建一个namespace定义了op,type,attr
-
-Operation>
-
-An operation can have zero or more regions . Note that this creates a nested IR structure, as regions consist of blocks, which in turn, consist of a list of operations.
-
-Module>顶层结构，包含一个region的 op, region内包含一个block
-
-Function> 包含一个region的op, 不允许捕获函数外部定义的值
-
-Region> A [CFG](https://en.wikipedia.org/wiki/Control-flow_graph) of MLIR [blocks](https://mlir.llvm.org/getting_started/Glossary/#block) . 
-
 ### 1.3 测试 
 
 check文本形式测试
@@ -62,15 +46,35 @@ check文本形式测试
 
 ​	uses one to verify the other
 
-Lit
+CHECK-LABEL 划分不同的CHECK块
+
+CHECK 之后
+
+CHECK-NEXT 之后紧挨一行
+
+CHECK_SAME 之后同一行
+
+CHECK-EMPTY 之后一行允许为空
+
+CHECK-NOT之后不允许出现
+
+CHECK-COUNT-n  之后匹配模式n次
+
+Lit测试
+
+https://llvm.org/docs/CommandGuide/lit.html
+
+配置选项参数，搜索测试，启动测试，控制整个测试过程
+
+lit proper is primarily an infrastructure for discovering and running arbitrary tests, and to expose a single convenient interface to these tests. lit itself doesn’t know how to run tests, rather this logic is defined by test suites.
+
+lit将测试套件标识为包含lit.cfg或lit.site.cfg文件的目录，通过递归搜索命令行中所有输入文件的目录层次结构来发现测试套件
 
 gtest单元测试
 
 ​	非文本的形式测试，对API接口，缺点是若API用户接口不稳定，每次改动接口会影响一大批测试要重写
 
 ​	文本形式的测试，不影响接口改动
-
-### 1.4 调试
 
 ## 2 Code Doc
 
@@ -117,18 +121,6 @@ IsolatedFromAbove，使用参数和属性和外部建立符号连接
 
 块参数类似函数参数，MLIR利于块参数来表示控制流相关(依赖)的值的传递，而不使用PHI,，与控制流无关的值可以直接引用，不需要通过块参数传递
 
-类型系统>
-
-开放类型系统,且类型可能具有特定于应用程序的语义(同一个类型可能在不同Target/App中由不同的解释用法)
-
-type aliases
-
-``` 
-INT32 = type i32
-```
-
-dialect可以自定义类型
-
 **Region**
 
 区域所属的Op定义了区域的语义当前定义了两种Region，The kinds of regions within an operation are described using the [RegionKindInterface](https://mlir.llvm.org/docs/Interfaces/#regionkindinterface) .
@@ -165,17 +157,9 @@ rank memref<?x?x?xtype>
 
 unrank memref<*xtype> 目的是允许外部库函数接收任意rank的memref参数
 
-layout specification 使用 affine map表达，也封装了offset,stride形式的stride-list的语法糖写法
+affinemap>
 
-memref dimension定义的是索引空间，
-
-index map 一对一的仿射变换
-
-layout map 逻辑索引空间到物理索引空间的映射，
-
-Strided MemRef 编码了距离
-
-用于dependence analysis, memory access pattern analysis, vectorization, copy elision and in-place updates等，默认为identity affine map
+用于dependence analysis, memory access pattern analysis, vectorization, copy elision and in-place updates等，affinemap是memref类型的一部分，默认为identity affine map
 
 tensor>
 
@@ -190,6 +174,28 @@ vector> 表示SIMD向量，使用目标特定的Op如AVX等，维度信息是静
 属性用于在不允许变量的位置，来指定编译时常量数据，属性的含义由上下文确定，标准属性是内置的核心属性集
 
 ### 2.2 Dialects
+
+#### 2.2.1 affine 
+
+provides a powerful abstraction for affine operations and analyses
+
+symbol标识符表示未知量，可以将其视为感兴趣区域的常数
+
+affine_map (dim...)[sym...] -> affine_expr 映射关系（仿射函数非正式地是线性函数加常数）
+
+affine_set (dim...)[sym...] -> dim... sym...关系约束
+
+```mlir
+affine.yield 
+	每次循环将返回值传递到迭代变量，最后次返回for返回值
+	if-then/else 返回if返回值
+affine.parallel	
+	通过affine.yield产生的每个值将通过AtomicRMWKind枚举中定义的规约方法进行accumulated/reduced
+```
+
+#### 2.2.2 std & scf
+
+#std的拆解不同部分 (控制流 , 标量 , vector , memref， tensor，dma/io)
 
 **std**
 
@@ -233,23 +239,23 @@ for 可以传递参数，以及[lb,ub,step)等信息到循环内，使用scf:yie
 
 if 如果if内有def value 则必须有else,且使用scf:yield传出需要的值
 
-**llvm dialect**
+#### **2.2.3 llvm dialect**
 
-wraps the LLVM IR types and instructions into MLIR types and operations
+包含一个LLVM Context and an LLVM Module( These objects can be obtained from the dialect object using `.getLLVMContext()` and `.getLLVMModule()`)，用于print, parse and manage LLVM IR types与LLVM IR objects交互
 
-包含一个LLVM Context and an LLVM Module，用于print, parse and manage LLVM IR types与LLVM IR objects交互
+**mlir LLVM::LLVMType** 
 
-Type 使用!llvm<>包装llvm 的类型
+​	wrapped LLVM IR type ； 包含了llvm::Type* ， 使用.getUnderlyingType()可以获取到， 底层对象 allocated within the LLVM context
 
-Operation 以llvm.前缀，Operation和 LLVM IR的指令有对应关系
+​	可以从llvm::Type*构造 LLVM::LLVMType（从内核构造外壳对象）
 
-llvm.func
+**Operation** 
 
-Attribute
+llvm.func Attribute 
 
-​	pass-through 使用MLIR的Attribute将LLVM IR函数所需要的信息以字符串传递
+​		pass-through 使用MLIR的Attribute将LLVM IR函数所需要的信息以字符串传递
 
-​	Linkage 与llvm ir中的func的链接属性对应
+​		Linkage 与llvm ir中的func的链接属性对应
 
 llvm.* operation与llvm ir中的同名指令对应
 
@@ -257,47 +263,11 @@ llvm.mlir.*是llvm dialect中和llvm ir不能直接对应的Operation
 
 ​	llvm.mlir.constant
 
-​    llvm.mlir.global [linkage属性] [const] 定义全局变量/常量
+​	llvm.mlir.global [linkage属性] [const] 定义全局变量/常量
 
-​    llvm.mlir.addressof 取地址，产生一个SSA Value为指针
-
-**vector**
-
-VV->HWV->LLVM IR
-
-LLVM IR level vector<4x8x128xf32> lower 为 !llvm<[4 x [ 8 x [ 128 x float ]]]>,对应了llvm 的array type
-
-HWC level 离硬件更近的dialect, 如GPU的NVVM dialect,或 LLVM dialect
-
-VV level 
-
-​	Use Standard and Vector Dialect Ops，	无论是否存在自动矢量化程序，都可以基于VectorOps方言构建一种概念上的矢量语言
-
-​	vector<HW-specific sizes x k x f32>, vector的某些HW-specific sizes在特定硬件特性匹配则能生成更高性能的代码，如GPU的wrap size，Avx 的寄存器位宽
-
-​	lower to LLVM IR 的权衡
-
-​		llvm 仅支持1-D的vector类型，n-D vector(`vector<s_0x...s_{n-1}xf32>`)->llvm的形式：
-
-​		1.`!llvm<"(s_0*...*s_{n-1})xfloat">`  flatten 1-D vector
-
-​		2.`!llvm<"[s_0x[s_1x[...<s_{n-1}xfloat>]]]">`Nested aggregate type of `1-D` vector
-
-​		Conclusion：Nested aggregate type of `1-D` vector更好(#个人观点:从vector到flatten 形式丢失了一些信息，不利于特殊优化)
+​	llvm.mlir.addressof 取地址，产生一个SSA Value为指针
 
 ### 2.3 Rationale
-
-#### 2.3.1 MLIR Rationale
-
-​	MLIR的思想来自用于较低层次的构造LLVM和Swift的IR，同时将它们与多面体抽象的思想相结合，以表示循环嵌套，多维张量数据以及这些实体上的变换， 表达和优化deep loop nests and dense matrices of high dimensionality， introduces notions from the polyhedral loop optimization works as first class concepts
-
-​	**poly**映射，集合以及具有仿射约束的关系是高维循环嵌套和多维数组的多面体表示基础的核心结构。这些structures以接近其数学形式的形式表示为文本表达式。**这些structures用于捕获循环嵌套，张量数据结构**，以及如何**针对目标体系结构对它们进行重新排序和映射**。所有structures或“符合”循环都作为多面体信息的一部分被捕获，张量变量，它们的布局以及对这些张量在内存中的下标访问也是如此。
-
-​	**传统的循环转换**（单模和非单模），例如循环平铺，交换，置换，倾斜，缩放，相对移位，反转，融合和分布/裂变。**数据布局的转换**（如填充和转换为块状布局）也可以通过仿射布局图很好地表示。
-
-​	在较高层次支持硬件相关的低级优化，如映射到**专用向量指令，自动向量化和软件流水线**，由于当前很多神经网络加速器具有专门的单元来处理大数据块,这样的专用单元或指令对多维数据块进行操作, 因此在接近汇编的低级别IR上以提升和重构循环的方法来并执行映射到专用指令非常困难， （经典的指令选择和调度主要只处理最内层的循环体，而多维数据块进行操作进行操作的指令跨越多个循环体，在内存层次结构的较高级别上对数据进行操作）
-
-​	LLVM从类型系统删除整数的符号，而使用指令区分带符号/不带符号整数
 
 ### 2.4 ODS
 
@@ -367,8 +337,6 @@ def MyInterface : OpInterface<"MyInterface"> {
   let methods = [...];
 }
 // OpInterface represents an interface registered to an operation.
-# 前者Interface通过ODS在td中定义OpInterface
-# 后者OpInterfaceTrait包装外部c++代码定义的OpInterface在ODS引用，将自己写的代码和ODS框架自动生成接起来
 class OpInterface<string name> : Interface<name>, OpInterfaceTrait<name>
 
 // OpInterfaceTrait corresponds to a specific 'OpInterface' class defined in
@@ -450,26 +418,19 @@ class StaticInterfaceMethod<string desc, string retTy, string methodName,
 
 默认根据Op的定义生成多个builder，若不满足可以通过 let builders自定义builder
 
-使用OpBuilder来自定义builder，使用`$_builder` and `$_state`引用默认添加的两个参数
+使用OpBuilderDAG / OpBuilder 来自定义builder，使用`$_builder` and `$_state`引用默认添加的两个参数
+
+OpBuilderDAG的参数是DAG, OpBuilder的参数是字符串， 不推荐使用 OpBuilder , 新的OpBuilderDAG代替它 
 
 ```
-class OpBuilder<string p, code b = ""> {
-  string params = p;
-  code body = b;
-}
-
-def MyOp : ... {
-  ...
-
-  let builders = [
-    OpBuilder<"float val = 0.5f", [{
+let builders = [
+    OpBuilderDAG<(ins CArg<"float", "0.5f">:$val), [{
       $_state.addAttribute("attr", $_builder.getF32FloatAttr(val));
     }]>
-  ];
-}
 
-// 将自动生成
-static void build(OpBuilder &builder, OperationState &state, float val = 0.5f) {
+// 将生成
+build(::mlir::OpBuilder &builder, ::mlir::OperationState &state,
+            float val) {
   state.addAttribute("attr", builder.getF32FloatAttr(val));
 }
 ```
@@ -486,6 +447,41 @@ static void build(OpBuilder &builder, OperationState &state, float val = 0.5f) {
 
 ​	GET_OP_CLASSES   all the op method definitions
 
+**自定义汇编格式**
+
+1.Declarative Assembly Format
+
+```
+  let assemblyFormat = [{
+    $callee `(` $args `)` attr-dict `:` functional-type($args, results)
+  }];
+```
+
+Directives
+A type of builtin function, with an optional set of arguments.
+
+Literals
+
+``括起来的关键字或标点符号，以下是有效的标点集：
+
+：，,, =，<，>，（，），{，}，[，]，->
+
+Variables
+An entity that has been registered on the operation itself, i.e. an argument(attribute or operand), result, successor, etc. 
+
+2.自定义对应的printer和parser
+
+```
+  // td中
+  let printer = [{ return ::print(printer, *this); }];
+  let parser = [{ return ::parse$cppClass(parser, result); }];
+  // 对应在c++中实现
+  static void print(mlir::OpAsmPrinter &printer, PrintOp op) {...}
+  static mlir::ParseResult parsePrintOp(mlir::OpAsmParser &parser,
+                                      mlir::OperationState &result) {...}
+  
+```
+
 **2.4.2 Constrain**
 
 ​	op验证和模式匹配都要满足约束
@@ -494,7 +490,7 @@ static void build(OpBuilder &builder, OperationState &state, float val = 0.5f) {
 
 ​	多实体约束 约束涉及Op多个operand/attribute/result ，描述实体之间的关系，此约束modeled as `PredOpTrait`，在Op模板参数指定
 
-​	trait 约束Op自身， modeled as `NativeOpTrait` ，在Op模板参数指定
+   Op自身的约束（如：无副作用）
 
 自定义约束 - 约束是带描述的谓词
 
@@ -511,16 +507,6 @@ class CPred<code pred> : Pred {
   code predExpr = "(" # pred # ")";
 }
 ```
-
-**2.4.3 Attr **
-
-生成代码(结构体和方法)提供对编译时的常量信息的存储、getter、和转换，以及基于约束生成验证。
-
-**2.4.4 Type def **
-
-
-
-
 
 **debug** 
 
@@ -628,6 +614,8 @@ mlir-tblgen --gen-rewriters -I /path/to/mlir/include /path/to/input/td/file
 
 ### 2.6  DAG-to-DAG Rewriting
 
+三要素 ：what? pattren  when ? benefit how? rewriter
+
 widely used throughout MLIR for **canonicalization, conversion, and general transformation**、
 
 Pattern Definition 
@@ -645,48 +633,6 @@ Pattern Definition
 ​		提供一系列方法updated in-place, replaced, or erased
 
 ​		继承自OpBuilder，提供所有的OpBuilder API,创建op，type，attr等
-
-```
-class MyPattern : public RewritePattern {
-public:
-  /// This overload constructs a pattern that only matches operations with the
-  /// root name of `MyOp`.
-  #MyOp::getOperationName() 指定根Op匹配特定Op
-  MyPattern(PatternBenefit benefit, MLIRContext *context)
-      : RewritePattern(MyOp::getOperationName(), benefit, context) {}
-      
-  /// This overload constructs a pattern that matches any operation type.
-  # 不指定根Op匹配特定Op时需要使用MatchAnyOpTypeTag()标明匹配anyop
-  MyPattern(PatternBenefit benefit)
-      : RewritePattern(benefit, MatchAnyOpTypeTag()) {}
-
-  /// In this section, the `match` and `rewrite` implementation is specified
-  /// using the separate hooks.
-  #match不允许改变IR
-  LogicalResult match(Operation *op) const override {
-    // The `match` method returns `success()` if the pattern is a match, failure
-    // otherwise.
-    // ...
-  }
-  
-  #所有IR突变（包括创建）都必须由给定的PatternRewriter执行
-  The root operation is required to either be: updated in-place, replaced, or erased.
-  
-  void rewrite(Operation *op, PatternRewriter &rewriter) {
-    // The `rewrite` method performs mutations on the IR rooted at `op` using
-    // the provided rewriter. All mutations must go through the provided
-    // rewriter.
-  }
-
-  /// In this section, the `match` and `rewrite` implementation is specified
-  /// using a single hook.
-  LogicalResult matchAndRewrite(Operation *op, PatternRewriter &rewriter) {
-    // The `matchAndRewrite` method performs both the matching and the mutation.
-    // Note that the match must reach a successful point before IR mutation may
-    // take place.
-  }
-};
-```
 
 Pattern Application **Driver**
 
@@ -794,7 +740,9 @@ PassInstrumentation
 
 ### 2.8 Interfaces
 
-转换和分析 通过 interfaces这种generic way of interacting with the IR，无需关心方言和Op的特定信息，即信息的获得通过Op和方言关联的 interfaces
+接口为方言和操作提供了一种通用机制，可为转换或分析提供信息
+
+转换和分析通过 interfaces这种generic way of interacting with the IR，无需关心方言和Op的特定信息，即信息的获得通过Op和方言关联的 interfaces
 
 interfaces不和转换和分析关联是和Op和方言关联，解耦了Op和转换和分析，使转换和分析的代码规范化
 
@@ -824,21 +772,35 @@ trait在附加在对象上时会直接成为它们的基类，可以直接访问
 
 ​	AutomaticAllocationScope  allocations are **automatically freed** when control is transferred back from the regions of such operations
 
+   NoSideEffect 无副作用， 无副作用的无用Op才可以被 canonicalization pass消除
+
 ### **2.10 Operation Canonicalization**
 
-MLIR has a single canonicalization pass，它以贪婪的方式迭代地应用规范化转换，直到IR收敛为止
+mlir有单一的 canonicalization pass（llvm有多个不同的pass, 如instcombine, dag combine等），它以贪婪的方式迭代地应用规范化转换，直到IR收敛为止; 这种局部转换由Op自己定义，有canonicalization pass回调Op注册的pattern或提供的fold函数.
 
-所有IR都会执行的转换
+canonicalization pass 执行的转换有
 
-​	消除无副作用的无用Op
+​	消除无副作用的无用Op (死节点消除)
 
-​	常量折叠
+​	常量折叠，  Constant folding hooks are specified by operations.
 
 ​	4+x -> x+4 right side
 
-特定的规范化转换由Op自己定义
+​    constant-like operations are uniqued and hoisted into the entry block of the first parent barrier region.
 
-​	getCanonicalizationPatterns  providing canonicalizations as a set of `RewritePattern`s
+**getCanonicalizationPatterns**
+
+**！！！pattern描述了一种局部模式与转换，是pass的辅助组件**
+
+getCanonicalizationPatterns  providing canonicalizations as a set of `RewritePattern`s, 此方法插入的patterns**由canonicalization pass调用实现局部转换**
+
+Op自己定义特定的规范化转换步骤:
+
+​	0. let hasCanonicalizer = 1
+
+​	1. 使用ddr/c++定义patterns
+
+​	2. 在算子 getCanonicalizationPatterns 方法中注册patterns
 
 ```
 # set 1 会生成一个 MyOp::getCanonicalizationPatterns的函数声明
@@ -854,13 +816,15 @@ void MyOp::getCanonicalizationPatterns(OwningRewritePatternList &patterns,
 }
 ```
 
-​	fold	
+**Canonicalizing with fold**	
 
-​		updating an operation in-place
+fold不局限于在**canonicalizer pass**使用， 如可以OpBuilder::createOrFold方法在创建Op时直接调用
 
-​        returning a set of pre-existing values (or attributes) to replace the operation 
+约束
 
-​		可以在canonicalizer pass之外直接使用，真正的局部转换，不需要 pattern rewriter
+​	不允许创建新Op，不允许生成新的Value; updating an operation in-place；真正的局部转换，局限于根Op
+
+​     可以returning a set of pre-existing values (or attributes) to replace the operation 
 
 ```
 ArrayRef<Attribute> operands用于表示operands are constant
@@ -872,113 +836,57 @@ LogicalResult MyOp::fold(ArrayRef<Attribute> operands,
 }
 ```
 
-### 2.11 Tutorials
+当fold方法返回一个Attribute作为结果时，它表示该结果是“常量”。需要定义一个materializeConstant hook方法，此hook接收由fold返回的Attribute值，产生一个“constant-like” operation**，通过此Operation常量属性转换为SSA Value**
 
-#### **2.11.1 Dialect CMake**
+### 2.11 Dialect Conversion
 
-```
-add_mlir_dialect_library(MLIRLLVMIR         #Dialect target名字 MLIRXXX
-  IR/LLVMDialect.cpp
-  IR/LLVMTypes.cpp
-  IR/LLVMTypeSyntax.cpp
+**Mode**
 
-  ADDITIONAL_HEADER_DIRS
-  ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/LLVMIR
+ applyPartialConversion 仅转换mark 为非法的operation，未mark的不转换
 
-  DEPENDS             #tablegen生成并编译的的target
-  MLIRLLVMOpsIncGen
-  MLIRLLVMConversionsIncGen
-  MLIROpenMPOpsIncGen
-  intrinsics_gen #dialects that depend on LLVM IR may need to depend on the LLVM ‘intrinsics_gen’ target to ensure that tablegen’d LLVM header files have been generated
- 
-  LINK_COMPONENTS    #llvm中的依赖target
-  AsmParser
-  BitReader
-  BitWriter
-  Core
+ applyFullConversion  对输入的所有operation 合法化转换
 
-  LINK_LIBS PUBLIC   #mlir中的依赖target
-  MLIRCallInterfaces
-  MLIRControlFlowInterfaces
-  MLIRIR
-  MLIRSideEffectInterfaces
-  MLIRSupport
-  )
- 
-# MLIRLLVMOpsIncGen由LLVMOps.td调用mlir_tablegen生成的一系列.inc编译链接生成
-set(LLVM_TARGET_DEFINITIONS LLVMOps.td)         
-mlir_tablegen(LLVMOps.h.inc -gen-op-decls)
-mlir_tablegen(LLVMOps.cpp.inc -gen-op-defs)
-mlir_tablegen(LLVMOpsDialect.h.inc -gen-dialect-decls)
-mlir_tablegen(LLVMOpsEnums.h.inc -gen-enum-decls)
-mlir_tablegen(LLVMOpsEnums.cpp.inc -gen-enum-defs)
-add_public_tablegen_target(MLIRLLVMOpsIncGen)
+ applyAnalysisConversion **没有真的执行转换**，仅分析和记录哪些operation可以成功合法化到给定的 Target
 
-# 转换
-add_mlir_conversion_library(MLIRLinalgToLLVM
-  LinalgToLLVM.cpp
+**A Conversion Target**
 
-  ADDITIONAL_HEADER_DIRS
-  ${MLIR_MAIN_INCLUDE_DIR}/mlir/Conversion/LinalgToLLVM
+​	通过以系列mark/add方法来标记非法/合法/动态合法
 
-  DEPENDS
-  MLIRConversionPassIncGen
-  intrinsics_gen #直接包含LLVM IR头文件可能需要依赖LLVM的“ intrinsics_gen”目标，以确保已生成tablegen的LLVM头文件
+​	动态合法允许定义更细致的约束，If a specific handler is not provided when setting the action**, the target must override the isDynamicallyLegal hook** provided by ConversionTarget
 
-  LINK_COMPONENTS
-  Core
+​	markOpRecursivelyLegal 所有嵌入在此Op的其它Op也被认为是合法的，即使这些Op被视为非法
 
-  LINK_LIBS PUBLIC
-  MLIRAffineToStandard
-  MLIREDSC
-  MLIRIR
-  MLIRLinalg
-  MLIRLLVMIR
-  MLIRSCFToStandard
-  MLIRStandardToLLVM
-  MLIRTransforms
-  MLIRVectorToLLVM
-  MLIRVectorToSCF
-  )
-```
+**A set of Rewrite Patterns**
 
-#### **2.11.2 Toy**
+​	该框架将自动构建一个转换图(传递闭包)，以将非合法操作转换为一组合法操作
 
-**语言设计**
+​    假如有有patterns: [`bar.add` -> `baz.add`, `baz.add` -> `foo.add`], 即使不存在pattern[`bar.add` -> foo.add]框架也会自动检测到它可以使bar.add-> foo.add合法化
 
-```
-#设计文档 | lcy
-#类型
-tensor  var a<[3,2],double>
-rank <= 2
-基本类型 long, double
-#Op
-elementwise  + - * <3,2> op <3,2> => <3,2>
-matrix * <3,2> * <2,3> => <3,3> 
-#函数
-函数声明是泛化的，仅知道是tensor,不知道rank,shape,datatype
-在函数调用点，函数被特化
-```
+​	**ConversionPattern**
 
-**Op vs Operation**
+​		在常规的RewritePattern类之外，转换框架提供了一种特殊类型的**ConversionPattern**
 
-​	**'Operation'**类用于一般性地对所有operation建模。从某种意义上说，它不描述特定 operations的属性或 operations类型，因此它是“不透明的”, the **‘Operation’** class provides a general API into an operation instance
+​		用于when a pattern relies on interacting with constructs specific to the conversion process(模式依赖于与特定于转换过程的构造交互)
 
-​	每种特定类型的operation都是**mlir::Op**的派生类，**Op** derived classes引用了一个**Operation**的指针， act as smart pointer wrapper around a **Operation**，**Op** derived classes提供了特定于operation的访问器方法和类型安全的属性，是一个interface for building and interfacing with the **Operation** class，它没有类成员，所有的数据结构信息存储在**Operation** class, 因此**Op** derived classes常***passing by value***
+​	例如:  要匹配的Op的操作数类型将与用户期望的操作数不对应，additional  `operands` parameter, containing the remapped operands of the original operation
 
-​	#Operation是存储信息的存储对象，Op是Operation的指针包装器
+**A Type Converter** (Optional)
 
-**Types**
+​	提供给转换模式的remapped operands必须是该模式期望的类型 ， TypeConverter object may be defined that details how types should be converted when interfacing with a pattern； a **materialization** can produce IR, whereas a **conversion** cannot；
 
-​	Types in MLIR (like attributes, locations, and many other things) are value-typed.这意味着Type实例是按值传递的，而不是按指针或按引用传递的。 Type类本身充当内部存储对象的wrapper，**该内部存储对象(internal storage object that holds the actual data for the type)在MLIRContext实例中是唯一的**； ***所以这类wrapper对象本身就扮演了引用的概念***  # impl模式
+​	source materialization  将具有“合法”Target类型的value转换回特定的Source类型；转换后的值被未转换的操作使用，则需要将其转换回源类型
 
+​	target mterialization  将具有“非法”源类型的值转换为“合法”类型的值，转换的操作使用了未转换的值，则需要将其转换为目标类型
 
+​	确保在转换过程中保留IR的类型，这意味着在转换过程中Value的类型不会隐式更改。更改Value的类型时，还必须在转换过程中更新该Value的user。If they aren’t, a **type conversion** must be materialized to **ensure** that a value of **the expected type is still present** within the IR.
 
+块参数类型转换
 
+​	ConversionPatternRewriter调用自定义hook -> convertRegionTypes ,它使用提供的type converter的argument materialization hook 对区域内的所有块参数转换; 还有一个可选的TypeConverter :: SignatureConversion参数，将**自定义转换应用于该区域的输入块**(输入块参数可能需要特别处理)， 若**仅转换入口块的签名**, 不转换任何其他块的签名，可以改用applySignatureConversion hook
 
+### 2.12 Conversion => LLVM Dialect
 
-
-​	
+llvm dialect 可以翻译为llvm ir, 其它dialect 可转换为llvm dialect，因此自定义dialect如果可以则选择转换为现存的dialect，然后利于他们的patterns  transitive lowering 为llvm dialect =》llvm ， 仅针对特殊情况自定义lower
 
 
 
